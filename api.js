@@ -27,10 +27,27 @@ app.use(session({
 }));
 
 // 3) CORS
+// Configuração do CORS (no início do arquivo)
 app.use(cors({
-  origin: 'http://localhost:5500', // frontend rodando em 5500
+  origin: 'https://airdrop-page.onrender.com', // Frontend oficial
   credentials: true
 }));
+
+// Rota /twitter/auth (garanta que o callbackUrl está correto)
+app.get('/twitter/auth', async (req, res) => {
+  try {
+    const callbackUrl = 'https://airdrop-page.onrender.com/twitter/callback';
+    const { url, oauth_token, oauth_token_secret } = await twitterClient.generateAuthLink(callbackUrl);
+
+    req.session.oauth_token = oauth_token;
+    req.session.oauth_token_secret = oauth_token_secret;
+
+    res.redirect(url);
+  } catch (error) {
+    console.error('Erro no OAuth:', error);
+    res.status(500).json({ error: 'Falha ao iniciar autenticação no Twitter' });
+  }
+});
 
 // 4) Body parser para JSON
 app.use(bodyParser.json());
@@ -61,24 +78,6 @@ app.post('/save-wallet-session', (req, res) => {
   res.json({ success: true });
 });
 
-// 9) Rota para iniciar OAuth no Twitter
-app.get('/twitter/auth', async (req, res) => {
-  try {
-    // Cria link de autenticação (callback será /twitter/callback)
-    const callbackUrl = `${process.env.BASE_URL || 'http://localhost:3000'}/twitter/callback`;
-    const { url, oauth_token, oauth_token_secret } = await twitterClient.generateAuthLink(callbackUrl);
-
-    // Salva tokens temporários na sessão
-    req.session.oauth_token = oauth_token;
-    req.session.oauth_token_secret = oauth_token_secret;
-
-    // Redireciona o navegador para o Twitter
-    res.redirect(url);
-  } catch (error) {
-    console.error('Error generating auth link:', error);
-    res.status(500).json({ error: 'Failed to start Twitter authentication' });
-  }
-});
 
 // 10) Callback do Twitter (após o usuário aceitar no Twitter)
 app.get('/twitter/callback', async (req, res) => {
