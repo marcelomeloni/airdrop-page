@@ -10,7 +10,6 @@ const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TWITTER_USER_ID = '1916522994236825600';
 const TWITTER_TARGET_USER = 'sunaryum'; // Nome de usuário do alvo
 const CLAIM_ENERGY = 50;
 
@@ -80,25 +79,43 @@ app.get('/twitter/auth', async (req, res) => {
 });
 
 // ====================================================
-// VERIFICAÇÃO DE FOLLOW VIA SCRAPING LEVE
+// VERIFICAÇÃO DE FOLLOW VIA SCRAPING LEVE (FUNCIONA COM PLANO FREE)
 // ====================================================
 async function checkIfUserFollows(sourceUsername) {
   try {
-    const response = await axios.get(`https://twitter.com/${sourceUsername}/following`, {
+    // 1. Tentar verificação pela página de "seguindo"
+    const followingResponse = await axios.get(`https://twitter.com/${sourceUsername}/following`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
       },
-      timeout: 10000 // 10 segundos de timeout
+      timeout: 15000 // 15 segundos
     });
     
-    // Duas estratégias de verificação para maior confiabilidade
-    const strategy1 = response.data.includes(`href="/${TWITTER_TARGET_USER}"`);
-    const strategy2 = response.data.includes(`@${TWITTER_TARGET_USER}`);
+    // Estratégia 1: Verificar pelo link do perfil
+    if (followingResponse.data.includes(`href="/${TWITTER_TARGET_USER}"`)) {
+      return true;
+    }
     
-    return strategy1 || strategy2;
+    // Estratégia 2: Verificar por menção direta
+    if (followingResponse.data.includes(`>@${TWITTER_TARGET_USER}<`)) {
+      return true;
+    }
+    
+    // 2. Se não encontrou, tentar pela página principal (fallback)
+    const profileResponse = await axios.get(`https://twitter.com/${sourceUsername}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
+      timeout: 10000
+    });
+    
+    // Verificar se mostra o botão "Seguindo" para o alvo
+    return profileResponse.data.includes(`data-testid="userFollowIndicator"`);
+    
   } catch (error) {
-    console.error('Erro na verificação de follow:', error);
+    console.error('Erro na verificação de follow:', error.message);
     return false;
   }
 }
@@ -125,12 +142,12 @@ app.get('/twitter/callback', async (req, res) => {
     
     const { client: userClient } = await tempClient.login(oauth_verifier);
 
-    // Obtém dados do usuário
+    // Obtém dados do usuário (usando apenas endpoints básicos)
     const { data: userData } = await userClient.v2.me({
       'user.fields': ['id', 'username'],
     });
 
-    // Verifica se segue a conta alvo
+    // Verifica se segue a conta alvo usando scraping
     const follows = await checkIfUserFollows(userData.username);
 
     // Cria token de verificação
@@ -329,7 +346,6 @@ app.get('/airdrop', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'online',
-    twitterUserId: TWITTER_USER_ID,
     claimsCount: claimsDB.size,
     uptime: process.uptime()
   });
