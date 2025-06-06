@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sunaryum - AirDrop</title>
+    <link rel="stylesheet" href="test.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    
+    <nav class="navbar">
+        <div class="nav-left">
+            <h1 class="logo">SUNARYUM</h1>
+            <div id="walletAddress" class="wallet-address"></div>
+        </div>
+        <button id="connectWalletBtn" class="connect-btn">
+            <i class="fas fa-wallet"></i>
+            <span>Connect Wallet</span>
+        </button>
+    </nav>
+
+    <main class="container">
+        <div class="hero">
+            <div class="sun-logo"></div>
+            <h1 class="title">SUNARYUM AIRDROP</h1>
+            <p class="slogan">A new way to generate, distribute and use energy</p>
+        </div>
+
+        <div class="quests-container">
+            <div class="quests-dropdown">
+                <div class="dropdown-header">
+                    <h3>Social Quests</h3>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                
+                <div class="quests-list">
+                    <div class="quest-item">
+                        <div class="quest-item">
+                            <div class="quest-info">
+                                <i class="fab fa-twitter"></i>
+                                <a href="https://twitter.com/sunaryum" target="_blank" class="social-link" data-platform="twitter">
+                                    Follow us on Twitter
+                                </a>
+                            </div>
+                            <button class="verify-btn" id="verifyTwitterBtn">
+                                Verify
+                            </button>
+                            <button class="claim-btn" disabled>
+                                <span>Claim</span>
+                                <i class="fas fa-lock"></i>
+                            </button>
+                        </div>
+                    
+                    <div class="quest-item">
+                        <div class="quest-info">
+                            <i class="fab fa-instagram"></i>
+                            <a href="https://instagram.com/netsunaryum" target="_blank" class="social-link" data-platform="instagram">
+                                Follow us on Instagram
+                            </a>
+                        </div>
+                        <button class="claim-btn" disabled>
+                            <span>Claim</span>
+                            <i class="fas fa-lock"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="test.js"></script>
+</body>
+</html>
