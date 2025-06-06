@@ -99,124 +99,168 @@ app.get('/twitter/auth', async (req, res) => {
  */
 async function checkIfUserFollows(sourceUsername) {
   try {
-    console.log(`→ iniciando scraping para ver se @${sourceUsername} segue @${TWITTER_TARGET_USER}`);
+    console.log(`→ Iniciando verificação avançada se @${sourceUsername} segue @${TWITTER_TARGET_USER}`);
     
-    // Normaliza os usernames para minúsculas
+    // Normalização de case
     const sourceLower = sourceUsername.toLowerCase();
     const targetLower = TWITTER_TARGET_USER.toLowerCase();
-    
-    // 1. Tenta encontrar na lista de seguidores do alvo
+    let found = false;
+
+    // 1. Método: Página de seguidores do alvo
     try {
+      console.log(`  • Verificando seguidores de @${TWITTER_TARGET_USER}`);
       const followersResp = await axios.get(
         `https://mobile.twitter.com/${TWITTER_TARGET_USER}/followers`,
         {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           },
           timeout: 20000,
         }
       );
 
       const followersHtml = followersResp.data.toLowerCase();
-      if (
-        followersHtml.includes(`href="/${sourceLower}"`) || 
-        followersHtml.includes(`>@${sourceLower}<`)
-      ) {
-        console.log('✔ encontrado nos seguidores (via página de seguidores)');
-        return true;
-      }
-    } catch (e) {
-      console.log('  • falhou em /followers');
-    }
-
-    // 2. Tenta encontrar na lista de "seguindo" do usuário
-    try {
-      const followingResp = await axios.get(
-        `https://mobile.twitter.com/${sourceUsername}/following`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-          timeout: 20000,
-        }
-      );
-
-      const followingHtml = followingResp.data.toLowerCase();
-      if (
-        followingHtml.includes(`href="/${targetLower}"`) || 
-        followingHtml.includes(`>@${targetLower}<`)
-      ) {
-        console.log('✔ encontrado na lista “seguindo” (via scraping)');
-        return true;
-      }
-    } catch (e) {
-      console.log('  • falhou em /following');
-    }
-
-    // 3. Verifica indicadores na página de perfil do usuário
-    try {
-      const profileResp = await axios.get(
-        `https://mobile.twitter.com/${sourceUsername}`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-          timeout: 15000,
-        }
-      );
-
-      const profileHtml = profileResp.data.toLowerCase();
-      
-      // Padrões de texto que indicam "Seguindo"
-      const followPatterns = [
-        '>seguindo<', 
-        '>following<',
-        'data-testid="unfollow"',
-        `data-testid="useractions" data-screenname="${targetLower}"`
+      const patterns = [
+        `href="/${sourceLower}"`, 
+        `>@${sourceLower}<`,
+        `data-screenname="${sourceLower}"`,
+        `>${sourceLower}<`
       ];
-      
-      if (followPatterns.some(pattern => profileHtml.includes(pattern))) {
-        console.log('✔ indicador “Seguindo” encontrado na página de perfil');
-        return true;
+
+      if (patterns.some(p => followersHtml.includes(p))) {
+        console.log('✔ Encontrado nos seguidores do alvo');
+        found = true;
       }
     } catch (e) {
-      console.log('  • erro na verificação de perfil');
+      console.log('  • Erro em /followers:', e.message);
     }
 
-    // 4. Verificação extra no perfil do alvo
-    try {
-      const targetProfileResp = await axios.get(
-        `https://mobile.twitter.com/${TWITTER_TARGET_USER}`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-          timeout: 15000,
+    // 2. Método: Página de "seguindo" do usuário
+    if (!found) {
+      try {
+        console.log(`  • Verificando quem @${sourceUsername} segue`);
+        const followingResp = await axios.get(
+          `https://mobile.twitter.com/${sourceUsername}/following`,
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+            timeout: 20000,
+          }
+        );
+
+        const followingHtml = followingResp.data.toLowerCase();
+        const patterns = [
+          `href="/${targetLower}"`,
+          `>@${targetLower}<`,
+          `data-screenname="${targetLower}"`,
+          `>${targetLower}<`
+        ];
+
+        if (patterns.some(p => followingHtml.includes(p))) {
+          console.log('✔ Encontrado na lista "seguindo" do usuário');
+          found = true;
         }
-      );
-
-      const targetHtml = targetProfileResp.data.toLowerCase();
-      
-      // Verifica se o usuário aparece na seção de seguidores
-      if (
-        targetHtml.includes(`href="/${sourceLower}"`) || 
-        targetHtml.includes(`>@${sourceLower}<`)
-      ) {
-        console.log('✔ encontrado no perfil do alvo');
-        return true;
+      } catch (e) {
+        console.log('  • Erro em /following:', e.message);
       }
-    } catch (e) {
-      console.log('  • erro na verificação do perfil alvo');
     }
 
-    console.log('✖ nenhum método encontrou follow');
-    return false;
+    // 3. Método: Página de perfil do usuário
+    if (!found) {
+      try {
+        console.log(`  • Verificando perfil de @${sourceUsername}`);
+        const profileResp = await axios.get(
+          `https://mobile.twitter.com/${sourceUsername}`,
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+            timeout: 15000,
+          }
+        );
+
+        const profileHtml = profileResp.data.toLowerCase();
+        const followPatterns = [
+          '>seguindo<', 
+          '>following<',
+          'data-testid="unfollow"',
+          `data-testid="useractions" data-screenname="${targetLower}"`,
+          `aria-label="deixar de seguir @${targetLower}"`,
+          `unfollow @${targetLower}`
+        ];
+
+        if (followPatterns.some(p => profileHtml.includes(p))) {
+          console.log('✔ Indicador de "Seguindo" encontrado no perfil');
+          found = true;
+        }
+      } catch (e) {
+        console.log('  • Erro no perfil do usuário:', e.message);
+      }
+    }
+
+    // 4. Método: Página de perfil do alvo
+    if (!found) {
+      try {
+        console.log(`  • Verificando perfil de @${TWITTER_TARGET_USER}`);
+        const targetProfileResp = await axios.get(
+          `https://mobile.twitter.com/${TWITTER_TARGET_USER}`,
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+            timeout: 15000,
+          }
+        );
+
+        const targetHtml = targetProfileResp.data.toLowerCase();
+        const patterns = [
+          `href="/${sourceLower}"`,
+          `>@${sourceLower}<`,
+          `data-screenname="${sourceLower}"`,
+          `>${sourceLower}<`,
+          `data-testid="follower" data-screenname="${sourceLower}"`
+        ];
+
+        if (patterns.some(p => targetHtml.includes(p))) {
+          console.log('✔ Encontrado no perfil do alvo');
+          found = true;
+        }
+      } catch (e) {
+        console.log('  • Erro no perfil do alvo:', e.message);
+      }
+    }
+
+    // 5. Método: API não oficial (fallback)
+    if (!found) {
+      try {
+        console.log(`  • Tentando API não oficial`);
+        const apiUrl = `https://twstalker.com/api/profile/${sourceUsername}`;
+        const apiResp = await axios.get(apiUrl, { timeout: 10000 });
+        
+        if (apiResp.data?.following?.some(user => 
+          user.username.toLowerCase() === targetLower || 
+          user.screen_name.toLowerCase() === targetLower)) {
+          console.log('✔ Encontrado via API não oficial');
+          found = true;
+        }
+      } catch (e) {
+        console.log('  • Erro na API não oficial:', e.message);
+      }
+    }
+
+    if (!found) {
+      console.log('✖ Nenhum método encontrou evidências de follow');
+    }
+
+    return found;
   } catch (err) {
-    console.error('Erro geral em checkIfUserFollows:', err);
+    console.error('Erro crítico em checkIfUserFollows:', err);
     return false;
   }
 }
