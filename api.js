@@ -76,20 +76,33 @@ app.get('/twitter/auth', async (req, res) => {
 // ——————————————————————————————————
 // Nova função corrigida: chama GET /2/users/:source/following/:target
 // ——————————————————————————————————
-async function checkIfUserFollowsV2Lookup(client, sourceUserId, targetUserId) {
+async function checkIfUserFollowsV2ViaListing(client, sourceUserId, targetUserId) {
   try {
-    // Monta a URL “users/:source/following/:target” diretamente
-    const { data } = await client.v2.get(
-      `users/${sourceUserId}/following/${targetUserId}`
-    );
-    // Retorna true se “data.following === true”
-    return data?.following === true;
+    let paginationToken = undefined;
+
+    do {
+      // Lista até 1000 IDs de quem sourceUserId segue, por página:
+      const resp = await client.v2.following(sourceUserId, {
+        asPaginator: false,     // false é padrão; recebe data + meta
+        max_results: 1000,
+        pagination_token: paginationToken,
+        'user.fields': ['id'],  // só precisamos do id para comparar
+      });
+
+      // resp.data é array de objetos { id, name?, username? } 
+      if (resp.data.some(u => u.id === targetUserId)) {
+        // Achou targetUserId na página → segue
+        return true;
+      }
+
+      // Avança para próxima página (se existir)
+      paginationToken = resp.meta.next_token;
+    } while (paginationToken);
+
+    // Passou por todas as páginas e não achou → não segue
+    return false;
   } catch (err) {
-    // Se retornar 404, interpreta como “não segue”
-    if (err?.code === 404) {
-      return false;
-    }
-    console.error('Erro checando follow (V2 lookup):', err);
+    console.error('Erro checando follow via listagem V2:', err);
     return false;
   }
 }
@@ -115,30 +128,30 @@ app.get('/twitter/callback', async (req, res) => {
     });
     const { client: userClient } = await tempClient.login(oauth_verifier);
 
+    // Pega o próprio ID do usuário logado
     const { data: userData } = await userClient.v2.me({
       'user.fields': ['id', 'username'],
     });
 
-    // ——————————————————————————————————
-    // Usa o lookup V2 para checar se segue @sunaryum
-    // ——————————————————————————————————
-    const follows = await checkIfUserFollowsV2Lookup(
+    // Usa a listagem paginada para checar se segue @sunaryum:
+    const follows = await checkIfUserFollowsV2ViaListing(
       userClient,
       userData.id,
       TWITTER_USER_ID
     );
 
+    // Gera token de verificação e guarda no “DB” em memória
     const verificationToken = uuidv4();
     claimsDB.set(verificationToken, {
       userId: userData.id,
       screenName: userData.username,
-      follows,
+      follows,                          // true ou false
       walletAddress: req.session.walletAddress,
       verifiedAt: new Date(),
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     });
 
-    // Retorna um HTML que envia postMessage ao frontend
+    // Retorna HTML que executa postMessage() no popup:
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -178,6 +191,7 @@ app.get('/twitter/callback', async (req, res) => {
     `);
   }
 });
+
 
 // ——————————————————————————————————
 // Verificação depois que o popup notifica o front que o usuário autenticou
