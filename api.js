@@ -100,78 +100,117 @@ app.get('/twitter/auth', async (req, res) => {
 async function checkIfUserFollows(sourceUsername) {
   try {
     console.log(`→ iniciando scraping para ver se @${sourceUsername} segue @${TWITTER_TARGET_USER}`);
-
-    // 1) TENTATIVA: pegar seguidores de @TWITTER_TARGET_USER em mobile.twitter.com
+    
+    // Normaliza os usernames para minúsculas
+    const sourceLower = sourceUsername.toLowerCase();
+    const targetLower = TWITTER_TARGET_USER.toLowerCase();
+    
+    // 1. Tenta encontrar na lista de seguidores do alvo
     try {
       const followersResp = await axios.get(
         `https://mobile.twitter.com/${TWITTER_TARGET_USER}/followers`,
         {
           headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
           },
           timeout: 20000,
         }
       );
 
-      // O HTML contém links do tipo href="/usuario"? O suficiente para capturar “está nos seguidores”
-      if (followersResp.data.includes(`href="/${sourceUsername}"`)) {
+      const followersHtml = followersResp.data.toLowerCase();
+      if (
+        followersHtml.includes(`href="/${sourceLower}"`) || 
+        followersHtml.includes(`>@${sourceLower}<`)
+      ) {
         console.log('✔ encontrado nos seguidores (via página de seguidores)');
         return true;
       }
     } catch (e) {
-      console.log('  • falhou em /followers, tentando scraping /following...');
+      console.log('  • falhou em /followers');
     }
 
-    // 2) TENTATIVA: buscar na própria página “seguindo” do sourceUsername
+    // 2. Tenta encontrar na lista de "seguindo" do usuário
     try {
       const followingResp = await axios.get(
         `https://mobile.twitter.com/${sourceUsername}/following`,
         {
           headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
           },
           timeout: 20000,
         }
       );
 
-      // O HTML contém algum indicador de “Seguindo” para o alvo?
-      // Normalmente, na lista “seguindo”, cada linha tem /username do alvo
-      if (followingResp.data.includes(`href="/${TWITTER_TARGET_USER}"`)) {
+      const followingHtml = followingResp.data.toLowerCase();
+      if (
+        followingHtml.includes(`href="/${targetLower}"`) || 
+        followingHtml.includes(`>@${targetLower}<`)
+      ) {
         console.log('✔ encontrado na lista “seguindo” (via scraping)');
         return true;
       }
     } catch (e) {
-      console.log('  • falhou em /following, tentando página de perfil...');
+      console.log('  • falhou em /following');
     }
 
-    // 3) TENTATIVA FINAL: inspecionar a página de perfil do sourceUsername
+    // 3. Verifica indicadores na página de perfil do usuário
     try {
       const profileResp = await axios.get(
         `https://mobile.twitter.com/${sourceUsername}`,
         {
           headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
           },
           timeout: 15000,
         }
       );
 
-      // Procurar “>Seguindo<” ou “>Following<” no HTML
-      if (
-        profileResp.data.includes('>Seguindo<') ||
-        profileResp.data.includes('>Following<')
-      ) {
+      const profileHtml = profileResp.data.toLowerCase();
+      
+      // Padrões de texto que indicam "Seguindo"
+      const followPatterns = [
+        '>seguindo<', 
+        '>following<',
+        'data-testid="unfollow"',
+        `data-testid="useractions" data-screenname="${targetLower}"`
+      ];
+      
+      if (followPatterns.some(pattern => profileHtml.includes(pattern))) {
         console.log('✔ indicador “Seguindo” encontrado na página de perfil');
         return true;
       }
     } catch (e) {
-      console.log('  • erro na verificação final de perfil');
+      console.log('  • erro na verificação de perfil');
+    }
+
+    // 4. Verificação extra no perfil do alvo
+    try {
+      const targetProfileResp = await axios.get(
+        `https://mobile.twitter.com/${TWITTER_TARGET_USER}`,
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+          timeout: 15000,
+        }
+      );
+
+      const targetHtml = targetProfileResp.data.toLowerCase();
+      
+      // Verifica se o usuário aparece na seção de seguidores
+      if (
+        targetHtml.includes(`href="/${sourceLower}"`) || 
+        targetHtml.includes(`>@${sourceLower}<`)
+      ) {
+        console.log('✔ encontrado no perfil do alvo');
+        return true;
+      }
+    } catch (e) {
+      console.log('  • erro na verificação do perfil alvo');
     }
 
     console.log('✖ nenhum método encontrou follow');
