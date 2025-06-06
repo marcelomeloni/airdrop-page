@@ -370,7 +370,9 @@ app.get('/claim-status/:walletAddress', (req, res) => {
   }
   return res.json({ claims: list });
 });
-
+app.get('/airdrop', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'test.html'));
+});
 /** Rota simples para teste /health */
 app.get('/health', (req, res) => {
   return res.json({
