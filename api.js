@@ -99,119 +99,28 @@ app.get('/twitter/auth', async (req, res) => {
  */
 async function checkIfUserFollows(userClient, sourceUsername) {
   try {
-    console.log(`→ Verificação combinada se @${sourceUsername} segue @${TWITTER_TARGET_USER}`);
+    console.log(`→ Verificação direta se @${sourceUsername} segue @${TWITTER_TARGET_USER}`);
     
-    // 1. TENTATIVA: API oficial do Twitter usando o token do usuário
-    try {
-      const targetUser = await userClient.v2.userByUsername(TWITTER_TARGET_USER);
-      const relationship = await userClient.v1.relationship({
-        source_screen_name: sourceUsername,
-        target_screen_name: TWITTER_TARGET_USER,
-      });
-      
-      if (relationship.relationship?.source?.following) {
-        console.log('✔ Confirmação via API oficial (relacionamento direto)');
-        return true;
-      }
-    } catch (apiError) {
-      console.log('  • API oficial falhou, usando scraping avançado:', apiError.message);
-    }
+    // 1. Obter ID do alvo
+    const targetUser = await userClient.v2.userByUsername(TWITTER_TARGET_USER);
+    const targetUserId = targetUser.data.id;
 
-    // 2. SCRAPING AVANÇADO com múltiplas fontes
-    const sourceLower = sourceUsername.toLowerCase();
-    const targetLower = TWITTER_TARGET_USER.toLowerCase();
-    
-    const endpoints = [
-      `https://mobile.twitter.com/${TWITTER_TARGET_USER}/followers`,
-      `https://mobile.twitter.com/${sourceUsername}/following`,
-      `https://mobile.twitter.com/${sourceUsername}`,
-      `https://mobile.twitter.com/${TWITTER_TARGET_USER}`
-    ];
+    // 2. Verificar follow usando o endpoint mais simples possível
+    const follows = await userClient.v2.following(sourceUsername, {
+      max_results: 100,
+      'user.fields': ['username']
+    });
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    };
-
-    // Padrões de busca com múltiplas variações
-    const sourcePatterns = [
-      `href="/${sourceLower}"`, 
-      `>@${sourceLower}<`,
-      `data-screenname="${sourceLower}"`,
-      `>${sourceLower}<`,
-      `@${sourceLower}`
-    ];
-
-    const targetPatterns = [
-      `href="/${targetLower}"`,
-      `>@${targetLower}<`,
-      `data-screenname="${targetLower}"`,
-      `>${targetLower}<`,
-      `@${targetLower}`
-    ];
-
-    const followIndicators = [
-      '>seguindo<', 
-      '>following<',
-      'data-testid="unfollow"',
-      `data-testid="useractions" data-screenname="${targetLower}"`,
-      `aria-label="deixar de seguir @${targetLower}"`,
-      `unfollow @${targetLower}`
-    ];
-
-    // Executa todas as verificações em paralelo
-    const results = await Promise.allSettled(
-      endpoints.map(url => axios.get(url, { headers, timeout: 15000 }))
+    // 3. Procurar o alvo na lista de seguindo
+    const found = follows.data.some(user => 
+      user.username.toLowerCase() === TWITTER_TARGET_USER.toLowerCase()
     );
 
-    for (const [index, result] of results.entries()) {
-      if (result.status === 'fulfilled') {
-        const html = result.value.data.toLowerCase();
-        const url = endpoints[index];
-
-        // Verificação baseada na URL
-        if (url.includes('/followers') || url.includes(TWITTER_TARGET_USER)) {
-          if (sourcePatterns.some(p => html.includes(p))) {
-            console.log(`✔ Evidência encontrada em: ${url}`);
-            return true;
-          }
-        }
-        
-        if (url.includes('/following') || url.includes(sourceUsername)) {
-          if (targetPatterns.some(p => html.includes(p))) {
-            console.log(`✔ Evidência encontrada em: ${url}`);
-            return true;
-          }
-        }
-        
-        if (followIndicators.some(p => html.includes(p))) {
-          console.log(`✔ Indicador de follow encontrado em: ${url}`);
-          return true;
-        }
-      }
-    }
-
-    // 3. FALLBACK: Verificação por menção direta
-    try {
-      const userTweets = await axios.get(
-        `https://mobile.twitter.com/${sourceUsername}/with_replies`,
-        { headers, timeout: 15000 }
-      );
-      
-      const tweetsHtml = userTweets.data.toLowerCase();
-      if (tweetsHtml.includes(`@${targetLower}`)) {
-        console.log('✔ Menção encontrada nos tweets do usuário');
-        return true;
-      }
-    } catch (tweetError) {
-      console.log('  • Fallback de tweets falhou:', tweetError.message);
-    }
-
-    console.log('✖ Nenhuma evidência de follow encontrada');
-    return false;
+    console.log(found ? '✔ Segue' : '✖ Não segue');
+    return found;
+    
   } catch (err) {
-    console.error('Erro crítico em checkIfUserFollows:', err);
+    console.error('Erro na verificação:', err);
     return false;
   }
 }
