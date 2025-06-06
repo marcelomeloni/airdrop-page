@@ -9,56 +9,35 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// 1) Configuração do Twitter (OAuth 1.0a)
 const TWITTER_USER_ID = '1916522994236825600';
 const CLAIM_ENERGY = 50;
+
 const twitterClient = new TwitterApi({
   appKey: process.env.TWITTER_CONSUMER_KEY,
   appSecret: process.env.TWITTER_CONSUMER_SECRET,
 });
 
-// 2) Sessão em memória (desenvolvimento)
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // em produção: secure: true + HTTPS
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: false },
+  })
+);
 
-// 3) CORS
-// Configuração do CORS (no início do arquivo)
-app.use(cors({
-  origin: 'https://airdrop-page.onrender.com', // Frontend oficial
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: 'https://airdrop-page.onrender.com',
+    credentials: true,
+  })
+);
 
-// Rota /twitter/auth (garanta que o callbackUrl está correto)
-app.get('/twitter/auth', async (req, res) => {
-  try {
-    const callbackUrl = 'https://airdrop-page.onrender.com/twitter/callback';
-    const { url, oauth_token, oauth_token_secret } = await twitterClient.generateAuthLink(callbackUrl);
-
-    req.session.oauth_token = oauth_token;
-    req.session.oauth_token_secret = oauth_token_secret;
-
-    res.redirect(url);
-  } catch (error) {
-    console.error('Erro no OAuth:', error);
-    res.status(500).json({ error: 'Falha ao iniciar autenticação no Twitter' });
-  }
-});
-
-// 4) Body parser para JSON
 app.use(bodyParser.json());
-
-// 5) Servir estáticos (pasta public)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 6) “Banco” em memória para guardar tokens de verificação
 const claimsDB = new Map();
 
-// 7) Middleware para checar se wallet veio no corpo da requisição
 const verifyWallet = (req, res, next) => {
   const walletAddress = req.body.wallet_address || req.params.walletAddress;
   if (!walletAddress) {
@@ -68,7 +47,6 @@ const verifyWallet = (req, res, next) => {
   next();
 };
 
-// 8) Rota que grava a wallet na sessão
 app.post('/save-wallet-session', (req, res) => {
   const { walletAddress } = req.body;
   if (!walletAddress) {
@@ -78,38 +56,70 @@ app.post('/save-wallet-session', (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/twitter/auth', async (req, res) => {
+  try {
+    const callbackUrl = 'https://airdrop-page.onrender.com/twitter/callback';
+    const { url, oauth_token, oauth_token_secret } =
+      await twitterClient.generateAuthLink(callbackUrl);
 
-// 10) Callback do Twitter (após o usuário aceitar no Twitter)
+    req.session.oauth_token = oauth_token;
+    req.session.oauth_token_secret = oauth_token_secret;
+    res.redirect(url);
+  } catch (error) {
+    console.error('Erro no OAuth:', error);
+    res
+      .status(500)
+      .json({ error: 'Falha ao iniciar autenticação no Twitter' });
+  }
+});
+
+// ——————————————
+// Esta é a nova função que faz “lookup if following” no V2.
+// Disponível em Essential V2. Retorna true|false.
+// ——————————————
+async function checkIfUserFollowsV2Lookup(client, sourceUserId, targetUserId) {
+  try {
+    // GET /2/users/:source/following/:target
+    const { data } = await client.v2.userFollows(sourceUserId, targetUserId);
+    return data?.following === true;
+  } catch (err) {
+    console.error('Erro checando follow (V2 lookup):', err);
+    return false;
+  }
+}
+
+// ——————————————
+// Callback após login no Twitter
+// ——————————————
 app.get('/twitter/callback', async (req, res) => {
   const { oauth_token, oauth_verifier } = req.query;
   const session_oauth_token = req.session.oauth_token;
   const session_oauth_token_secret = req.session.oauth_token_secret;
 
-  // Se não bater com o token que salvamos na sessão, aborta
   if (session_oauth_token !== oauth_token) {
     return res.status(400).send('Invalid token');
   }
 
   try {
-    // Troca o oauth_token + oauth_verifier por um client autenticado
     const tempClient = new TwitterApi({
       appKey: process.env.TWITTER_CONSUMER_KEY,
       appSecret: process.env.TWITTER_CONSUMER_SECRET,
       accessToken: oauth_token,
       accessSecret: session_oauth_token_secret,
     });
-    const { client: userClient, accessToken, accessSecret } = await tempClient.login(oauth_verifier);
+    const { client: userClient } = await tempClient.login(oauth_verifier);
 
-    // Pega dados do usuário autenticado
     const { data: userData } = await userClient.v2.me({
-      'user.fields': ['id', 'name', 'username']
+      'user.fields': ['id', 'username'],
     });
 
-    // Verifica se o usuário segue a conta @sunaryum
-    const follows = await checkIfUserFollowsV1(userClient, userData.id, TWITTER_USER_ID);
+    // === AQUI: usa V2 lookup para checar se “segue @sunaryum” ===
+    const follows = await checkIfUserFollowsV2Lookup(
+      userClient,
+      userData.id,
+      TWITTER_USER_ID
+    );
 
-
-    // Gera token único de verificação
     const verificationToken = uuidv4();
     claimsDB.set(verificationToken, {
       userId: userData.id,
@@ -117,10 +127,9 @@ app.get('/twitter/callback', async (req, res) => {
       follows,
       walletAddress: req.session.walletAddress,
       verifiedAt: new Date(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     });
 
-    // Informa ao frontend, via postMessage no popup, que deu certo
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -145,8 +154,7 @@ app.get('/twitter/callback', async (req, res) => {
     res.status(500).send(`
       <!DOCTYPE html>
       <html>
-      <head>
-        <title>Twitter Auth</title>
+      <head><title>Twitter Auth</title>
         <script>
           window.opener.postMessage({
             type: 'TWITTER_AUTH_COMPLETE',
@@ -156,44 +164,30 @@ app.get('/twitter/callback', async (req, res) => {
           window.close();
         </script>
       </head>
-      <body>
-        Authentication failed. Please try again.
-      </body>
+      <body>Authentication failed. Please try again.</body>
       </html>
     `);
   }
 });
 
-// 11) Função auxiliar para checar “follow”
-async function checkIfUserFollowsV1(client, sourceUserId, targetUserId) {
-  try {
-    // Chamando o endpoint v1.1
-    const rel = await client.v1.get('friendships/show.json', {
-      source_id: sourceUserId,
-      target_id: targetUserId
-    });
-    return rel.relationship.source.following === true;
-  } catch (err) {
-    console.error('Erro checando follow (v1.1):', err);
-    return false;
-  }
-}
-
-
-// 12) Verificação após o popup avisar que o usuário fez login
+// ——————————————
+// Verificação após popup avisar que usuário autenticou
+// ——————————————
 app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
-
   if (!token) {
-    return res.status(400).json({ verified: false, error: 'Verification token is required' });
+    return res
+      .status(400)
+      .json({ verified: false, error: 'Verification token is required' });
   }
   const verificationData = claimsDB.get(token);
   if (!verificationData) {
     return res.json({ verified: false, error: 'Invalid or expired token' });
   }
   if (verificationData.walletAddress !== walletAddress) {
-    return res.json({ verified: false, error: 'Token does not match wallet' });
+    return res
+      .json({ verified: false, error: 'Token does not match wallet' });
   }
   if (new Date() > verificationData.expiresAt) {
     claimsDB.delete(token);
@@ -202,16 +196,20 @@ app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
 
   res.json({
     verified: verificationData.follows,
-    twitterHandle: verificationData.screenName
+    twitterHandle: verificationData.screenName,
   });
 });
 
-// 13) Rota para “claim” de recompensa
+// ——————————————
+// Rota para “claim” de recompensa
+// ——————————————
 app.post('/claim-reward', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
   if (!token) {
-    return res.status(400).json({ success: false, error: 'Verification token is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: 'Verification token is required' });
   }
   const verificationData = claimsDB.get(token);
   if (!verificationData) {
@@ -225,26 +223,36 @@ app.post('/claim-reward', verifyWallet, (req, res) => {
     return res.json({ success: false, error: 'Verification token expired' });
   }
   if (!verificationData.follows) {
-    return res.json({ success: false, error: 'You do not follow @sunaryum on Twitter' });
+    return res.json({
+      success: false,
+      error: 'You do not follow @sunaryum on Twitter',
+    });
   }
   if (verificationData.claimed) {
-    return res.json({ success: false, error: 'Reward already claimed for this verification' });
+    return res.json({
+      success: false,
+      error: 'Reward already claimed for this verification',
+    });
   }
 
   verificationData.claimed = true;
   verificationData.claimedAt = new Date();
   claimsDB.set(token, verificationData);
 
-  console.log(`Claiming reward for ${walletAddress} (${verificationData.screenName}): ${CLAIM_ENERGY} energy`);
+  console.log(
+    `Claiming reward for ${walletAddress} (${verificationData.screenName}): ${CLAIM_ENERGY} energy`
+  );
   res.json({
     success: true,
     message: `Successfully claimed ${CLAIM_ENERGY} energy`,
     energy: CLAIM_ENERGY,
-    twitterHandle: verificationData.screenName
+    twitterHandle: verificationData.screenName,
   });
 });
 
-// 14) Rota para checar status de “claims” de uma wallet
+// ——————————————
+// Rota para checar status de “claims” de uma wallet
+// ——————————————
 app.get('/claim-status/:walletAddress', (req, res) => {
   const walletAddress = req.params.walletAddress;
   const claims = [];
@@ -254,28 +262,34 @@ app.get('/claim-status/:walletAddress', (req, res) => {
         twitterHandle: data.screenName,
         claimed: data.claimed || false,
         claimedAt: data.claimedAt,
-        verifiedAt: data.verifiedAt
+        verifiedAt: data.verifiedAt,
       });
     }
   }
   res.json({ claims });
 });
 
-// Rota customizada para /airdrop
+// ——————————————
+// Rota customizada /airdrop
+// ——————————————
 app.get('/airdrop', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'test.html'));
 });
-// 15) Health check
+
+// ——————————————
+// Health check
+// ——————————————
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     twitterUserId: TWITTER_USER_ID,
-    claimsCount: claimsDB.size
+    claimsCount: claimsDB.size,
   });
 });
 
-
-// 17) Inicia o servidor
+// ——————————————
+// Inicia o servidor
+// ——————————————
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Frontend: http://localhost:${PORT}`);
