@@ -106,7 +106,8 @@ app.get('/twitter/callback', async (req, res) => {
     });
 
     // Verifica se o usuário segue a conta @sunaryum
-    const follows = await checkIfUserFollows(userClient, userData.id, TWITTER_USER_ID);
+    const follows = await checkIfUserFollowsV1(userClient, userData.id, TWITTER_USER_ID);
+
 
     // Gera token único de verificação
     const verificationToken = uuidv4();
@@ -164,28 +165,20 @@ app.get('/twitter/callback', async (req, res) => {
 });
 
 // 11) Função auxiliar para checar “follow”
-async function checkIfUserFollows(client, sourceUserId, targetUserId) {
+async function checkIfUserFollowsV1(client, sourceUserId, targetUserId) {
   try {
-    // Caso o usuário siga muita gente, pode precisar paginar:
-    let paginationToken = undefined;
-    do {
-      const response = await client.v2.following(sourceUserId, {
-        max_results: 1000,
-        pagination_token: paginationToken,
-        'user.fields': ['id']
-      });
-      if (response.data.some(u => u.id === targetUserId)) {
-        return true;
-      }
-      paginationToken = response.meta.next_token;
-    } while (paginationToken);
-
-    return false;
-  } catch (error) {
-    console.error('Error checking follow status:', error);
+    // Chamando o endpoint v1.1
+    const rel = await client.v1.get('friendships/show.json', {
+      source_id: sourceUserId,
+      target_id: targetUserId
+    });
+    return rel.relationship.source.following === true;
+  } catch (err) {
+    console.error('Erro checando follow (v1.1):', err);
     return false;
   }
 }
+
 
 // 12) Verificação após o popup avisar que o usuário fez login
 app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
