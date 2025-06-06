@@ -267,7 +267,6 @@ app.get('/claim-status/:walletAddress', (req, res) => {
   }
   res.json({ claims });
 });
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Rota customizada para /airdrop
 app.get('/airdrop', (req, res) => {
