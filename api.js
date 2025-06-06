@@ -73,28 +73,30 @@ app.get('/twitter/auth', async (req, res) => {
   }
 });
 
-// ——————————————
-// Esta é a nova função que faz “lookup if following” no V2.
-// Disponível em Essential V2. Retorna true|false.
-// ——————————————
+// ——————————————————————————————————
+// Nova função corrigida: chama GET /2/users/:source/following/:target
+// ——————————————————————————————————
 async function checkIfUserFollowsV2Lookup(client, sourceUserId, targetUserId) {
   try {
-    // GET /2/users/:source_user_id/following/:target_user_id
-    const { data } = await client.v2.userFollows(sourceUserId, targetUserId);
+    // Monta a URL “users/:source/following/:target” diretamente
+    const { data } = await client.v2.get(
+      `users/${sourceUserId}/following/${targetUserId}`
+    );
+    // Retorna true se “data.following === true”
     return data?.following === true;
   } catch (err) {
-    if (err.code === 404) {
-      return false; // Usuário não existe ou relação não encontrada
+    // Se retornar 404, interpreta como “não segue”
+    if (err?.code === 404) {
+      return false;
     }
     console.error('Erro checando follow (V2 lookup):', err);
     return false;
   }
 }
 
-
-// ——————————————
-// Callback após login no Twitter
-// ——————————————
+// ——————————————————————————————————
+// Callback após o usuário autenticar no Twitter
+// ——————————————————————————————————
 app.get('/twitter/callback', async (req, res) => {
   const { oauth_token, oauth_verifier } = req.query;
   const session_oauth_token = req.session.oauth_token;
@@ -117,7 +119,9 @@ app.get('/twitter/callback', async (req, res) => {
       'user.fields': ['id', 'username'],
     });
 
-    // === AQUI: usa V2 lookup para checar se “segue @sunaryum” ===
+    // ——————————————————————————————————
+    // Usa o lookup V2 para checar se segue @sunaryum
+    // ——————————————————————————————————
     const follows = await checkIfUserFollowsV2Lookup(
       userClient,
       userData.id,
@@ -134,6 +138,7 @@ app.get('/twitter/callback', async (req, res) => {
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     });
 
+    // Retorna um HTML que envia postMessage ao frontend
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -174,9 +179,9 @@ app.get('/twitter/callback', async (req, res) => {
   }
 });
 
-// ——————————————
-// Verificação após popup avisar que usuário autenticou
-// ——————————————
+// ——————————————————————————————————
+// Verificação depois que o popup notifica o front que o usuário autenticou
+// ——————————————————————————————————
 app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
@@ -190,8 +195,7 @@ app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
     return res.json({ verified: false, error: 'Invalid or expired token' });
   }
   if (verificationData.walletAddress !== walletAddress) {
-    return res
-      .json({ verified: false, error: 'Token does not match wallet' });
+    return res.json({ verified: false, error: 'Token does not match wallet' });
   }
   if (new Date() > verificationData.expiresAt) {
     claimsDB.delete(token);
@@ -204,9 +208,9 @@ app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
   });
 });
 
-// ——————————————
+// ——————————————————————————————————
 // Rota para “claim” de recompensa
-// ——————————————
+// ——————————————————————————————————
 app.post('/claim-reward', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
@@ -254,9 +258,9 @@ app.post('/claim-reward', verifyWallet, (req, res) => {
   });
 });
 
-// ——————————————
+// ——————————————————————————————————
 // Rota para checar status de “claims” de uma wallet
-// ——————————————
+// ——————————————————————————————————
 app.get('/claim-status/:walletAddress', (req, res) => {
   const walletAddress = req.params.walletAddress;
   const claims = [];
@@ -273,16 +277,16 @@ app.get('/claim-status/:walletAddress', (req, res) => {
   res.json({ claims });
 });
 
-// ——————————————
+// ——————————————————————————————————
 // Rota customizada /airdrop
-// ——————————————
+// ——————————————————————————————————
 app.get('/airdrop', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'test.html'));
 });
 
-// ——————————————
+// ——————————————————————————————————
 // Health check
-// ——————————————
+// ——————————————————————————————————
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -291,9 +295,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ——————————————
+// ——————————————————————————————————
 // Inicia o servidor
-// ——————————————
+// ——————————————————————————————————
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Frontend: http://localhost:${PORT}`);
