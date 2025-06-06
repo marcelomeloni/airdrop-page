@@ -166,12 +166,15 @@ async function checkIfUserFollows(sourceUsername) {
       });
       
       // Verificar por múltiplos indicadores
-      const indicators = [
-        `data-testid="userFollowIndicator"`,
-        `Segue @${TWITTER_TARGET_USER}`,
-        `Following @${TWITTER_TARGET_USER}`,
-        `aria-label="Segue @${TWITTER_TARGET_USER}"`
-      ];
+     const indicators = [
+  `data-testid="userFollowIndicator"`,
+  `Segue @${TWITTER_TARGET_USER}`,
+  `Following @${TWITTER_TARGET_USER}`,
+  `aria-label="Segue @${TWITTER_TARGET_USER}"`,
+  `>${TWITTER_TARGET_USER}<`, // Para detectar menções diretas no HTML
+  '>Seguindo<', // <- ADICIONADO baseado no seu trecho do Inspect
+  '>Following<' // <- Para compatibilidade com Twitter em inglês
+];
       
       for (const indicator of indicators) {
         if (profileResponse.data.includes(indicator)) {
