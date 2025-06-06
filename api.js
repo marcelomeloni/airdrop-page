@@ -9,30 +9,24 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TWITTER_USER_ID = '1916522994236825600';
-const CLAIM_ENERGY = 50;
+const TWITTER_USER_ID = '1916522994236825600'; // @sunaryum
 
 const twitterClient = new TwitterApi({
-  appKey: process.env.TWITTER_CONSUMER_KEY,
-  appSecret: process.env.TWITTER_CONSUMER_SECRET,
+  appKey:   process.env.TWITTER_CONSUMER_KEY,
+  appSecret:process.env.TWITTER_CONSUMER_SECRET,
 });
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key',
-    resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false },
+}));
 
-app.use(
-  cors({
-    origin: 'https://airdrop-page.onrender.com',
-    credentials: true,
-  })
-);
-
+app.use(cors({
+  origin: 'https://airdrop-page.onrender.com', 
+  credentials: true,
+}));
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -61,62 +55,31 @@ app.get('/twitter/auth', async (req, res) => {
     const callbackUrl = 'https://airdrop-page.onrender.com/twitter/callback';
     const { url, oauth_token, oauth_token_secret } =
       await twitterClient.generateAuthLink(callbackUrl);
-
     req.session.oauth_token = oauth_token;
     req.session.oauth_token_secret = oauth_token_secret;
     res.redirect(url);
   } catch (error) {
     console.error('Erro no OAuth:', error);
-    res
-      .status(500)
-      .json({ error: 'Falha ao iniciar autenticação no Twitter' });
+    res.status(500).json({ error: 'Falha ao iniciar autenticação no Twitter' });
   }
 });
 
-// ——————————————————————————————————
-// Nova função corrigida: chama GET /2/users/:source/following/:target
-// ——————————————————————————————————
-// Função corrigida usando API v1.1 (funciona com plano Free)
-async function checkIfUserFollowsAlternative(client, sourceUserId, targetUserId) {
+// ——————————————
+// novo: usa API v1.1 para checar se user A segue user B
+async function checkIfUserFollowsUsingV1(client, sourceUserId, targetUserId) {
   try {
-    // 1. Verifica se o usuário segue usando um método alternativo
-    const targetUser = await client.v2.user(targetUserId, {
-      'user.fields': ['public_metrics']
+    const rel = await client.v1.friendships({ 
+      source_id: sourceUserId, 
+      target_id: targetUserId 
     });
-    
-    // 2. Checa se o usuário atual está nos seguidores do alvo
-    const followers = await client.v2.followers(targetUserId, {
-      max_results: 1000,
-      'user.fields': ['id']
-    });
-    
-    // 3. Procura o ID do usuário na lista de seguidores
-    return followers.data.some(user => user.id === sourceUserId);
+    return rel.relationship.source.following === true;
   } catch (err) {
-    console.error('Erro checando follow (método alternativo):', err);
-    
-    // 4. Fallback: verificação simplificada (menos precisa)
-    try {
-      const timeline = await client.v2.userTimeline(sourceUserId, {
-        max_results: 5,
-        'tweet.fields': ['referenced_tweets']
-      });
-      
-      // Verifica se o usuário mencionou ou respondeu ao alvo recentemente
-      return timeline.data.some(tweet => 
-        tweet.text.includes(`@${targetUser.data.username}`) || 
-        tweet.referenced_tweets?.some(ref => ref.id.includes(targetUserId))
-      );
-    } catch (fallbackError) {
-      console.error('Fallback também falhou:', fallbackError);
-      return false;
-    }
+    console.error('Erro checando follow com v1.1:', err);
+    return false;
   }
 }
+// ——————————————
 
-// ——————————————————————————————————
-// Callback após o usuário autenticar no Twitter
-// ——————————————————————————————————
 app.get('/twitter/callback', async (req, res) => {
   const { oauth_token, oauth_verifier } = req.query;
   const session_oauth_token = req.session.oauth_token;
@@ -128,37 +91,37 @@ app.get('/twitter/callback', async (req, res) => {
 
   try {
     const tempClient = new TwitterApi({
-      appKey: process.env.TWITTER_CONSUMER_KEY,
-      appSecret: process.env.TWITTER_CONSUMER_SECRET,
+      appKey:   process.env.TWITTER_CONSUMER_KEY,
+      appSecret:process.env.TWITTER_CONSUMER_SECRET,
       accessToken: oauth_token,
       accessSecret: session_oauth_token_secret,
     });
     const { client: userClient } = await tempClient.login(oauth_verifier);
 
-    // Pega o próprio ID do usuário logado
+    // Busca dados do usuário autenticado
     const { data: userData } = await userClient.v2.me({
       'user.fields': ['id', 'username'],
     });
 
-  // Usa a função v1.1 para checar se segue @sunaryum:
-const follows = await checkIfUserFollowsAlternative(
+    // ——————————————
+    // AQUI usamos v1.1 para checar follow
+    const follows = await checkIfUserFollowsUsingV1(
       userClient,
       userData.id,
       TWITTER_USER_ID
     );
+    // ——————————————
 
-    // Gera token de verificação e guarda no “DB” em memória
     const verificationToken = uuidv4();
     claimsDB.set(verificationToken, {
       userId: userData.id,
       screenName: userData.username,
-      follows,                          // true ou false
+      follows,                      // true ou false
       walletAddress: req.session.walletAddress,
       verifiedAt: new Date(),
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
     });
 
-    // Retorna HTML que executa postMessage() no popup:
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -182,8 +145,8 @@ const follows = await checkIfUserFollowsAlternative(
     console.error('Error during callback:', error);
     res.status(500).send(`
       <!DOCTYPE html>
-      <html>
-      <head><title>Twitter Auth</title>
+      <html><head><title>Twitter Auth</title></head>
+      <body>
         <script>
           window.opener.postMessage({
             type: 'TWITTER_AUTH_COMPLETE',
@@ -192,17 +155,12 @@ const follows = await checkIfUserFollowsAlternative(
           }, '*');
           window.close();
         </script>
-      </head>
-      <body>Authentication failed. Please try again.</body>
+      </body>
       </html>
     `);
   }
 });
 
-
-// ——————————————————————————————————
-// Verificação depois que o popup notifica o front que o usuário autenticou
-// ——————————————————————————————————
 app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
@@ -229,9 +187,6 @@ app.post('/twitter/verify-follow', verifyWallet, (req, res) => {
   });
 });
 
-// ——————————————————————————————————
-// Rota para “claim” de recompensa
-// ——————————————————————————————————
 app.post('/claim-reward', verifyWallet, (req, res) => {
   const { token } = req.body;
   const walletAddress = req.walletAddress;
@@ -279,9 +234,6 @@ app.post('/claim-reward', verifyWallet, (req, res) => {
   });
 });
 
-// ——————————————————————————————————
-// Rota para checar status de “claims” de uma wallet
-// ——————————————————————————————————
 app.get('/claim-status/:walletAddress', (req, res) => {
   const walletAddress = req.params.walletAddress;
   const claims = [];
@@ -298,16 +250,10 @@ app.get('/claim-status/:walletAddress', (req, res) => {
   res.json({ claims });
 });
 
-// ——————————————————————————————————
-// Rota customizada /airdrop
-// ——————————————————————————————————
 app.get('/airdrop', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'test.html'));
 });
 
-// ——————————————————————————————————
-// Health check
-// ——————————————————————————————————
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -316,9 +262,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ——————————————————————————————————
-// Inicia o servidor
-// ——————————————————————————————————
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Frontend: http://localhost:${PORT}`);
