@@ -81,41 +81,113 @@ app.get('/twitter/auth', async (req, res) => {
 // ====================================================
 // VERIFICAÇÃO DE FOLLOW VIA SCRAPING LEVE (FUNCIONA COM PLANO FREE)
 // ====================================================
+// ====================================================
+// VERIFICAÇÃO DE FOLLOW VIA SCRAPING AVANÇADO
+// ====================================================
 async function checkIfUserFollows(sourceUsername) {
   try {
-    // 1. Tentar verificação pela página de "seguindo"
-    const followingResponse = await axios.get(`https://twitter.com/${sourceUsername}/following`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-      },
-      timeout: 15000 // 15 segundos
-    });
+    console.log(`Iniciando verificação de follow para @${sourceUsername}`);
     
-    // Estratégia 1: Verificar pelo link do perfil
-    if (followingResponse.data.includes(`href="/${TWITTER_TARGET_USER}"`)) {
-      return true;
+    // 1. Verificação pela página de seguidores do alvo
+    try {
+      const followersResponse = await axios.get(`https://twitter.com/${TWITTER_TARGET_USER}/followers`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+        },
+        timeout: 20000
+      });
+      
+      // Verificar se o usuário está na lista de seguidores do alvo
+      if (followersResponse.data.includes(`href="/${sourceUsername}"`)) {
+        console.log(`Encontrado na lista de seguidores de @${TWITTER_TARGET_USER}`);
+        return true;
+      }
+    } catch (error) {
+      console.log('Erro ao acessar lista de seguidores, tentando alternativa...');
+    }
+
+    // 2. Verificação direta da relação
+    try {
+      const relationshipUrl = `https://twitter.com/i/api/1.1/friendships/show.json?source_screen_name=${sourceUsername}&target_screen_name=${TWITTER_TARGET_USER}`;
+      const relationshipResponse = await axios.get(relationshipUrl, {
+        headers: {
+          'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          'x-twitter-active-user': 'yes',
+          'x-twitter-client-language': 'pt'
+        },
+        timeout: 15000
+      });
+
+      if (relationshipResponse.data?.relationship?.source?.following) {
+        console.log('Relação de follow encontrada via API interna');
+        return true;
+      }
+    } catch (error) {
+      console.log('Falha na verificação direta, tentando scraping...');
+    }
+
+    // 3. Scraping avançado da página de seguindo
+    try {
+      const followingResponse = await axios.get(`https://twitter.com/${sourceUsername}/following`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Cookie': 'lang=pt'
+        },
+        timeout: 20000
+      });
+      
+      // Busca avançada por elementos específicos
+      const regex = new RegExp(
+        `data-testid="UserCell".*?href="/${TWITTER_TARGET_USER}"|` +
+        `href="/${TWITTER_TARGET_USER}"[^>]*aria-label[^>]*>@${TWITTER_TARGET_USER}<|` +
+        `data-testid="UserCell".*?@${TWITTER_TARGET_USER}`,
+        's'
+      );
+      
+      if (regex.test(followingResponse.data)) {
+        console.log('Elemento específico encontrado na página de seguindo');
+        return true;
+      }
+    } catch (error) {
+      console.log('Erro no scraping da página de seguindo');
+    }
+
+    // 4. Último recurso: verificação na página do perfil
+    try {
+      const profileResponse = await axios.get(`https://twitter.com/${sourceUsername}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+        },
+        timeout: 15000
+      });
+      
+      // Verificar por múltiplos indicadores
+      const indicators = [
+        `data-testid="userFollowIndicator"`,
+        `Segue @${TWITTER_TARGET_USER}`,
+        `Following @${TWITTER_TARGET_USER}`,
+        `aria-label="Segue @${TWITTER_TARGET_USER}"`
+      ];
+      
+      for (const indicator of indicators) {
+        if (profileResponse.data.includes(indicator)) {
+          console.log(`Indicador encontrado: ${indicator}`);
+          return true;
+        }
+      }
+    } catch (error) {
+      console.log('Erro na verificação do perfil');
     }
     
-    // Estratégia 2: Verificar por menção direta
-    if (followingResponse.data.includes(`>@${TWITTER_TARGET_USER}<`)) {
-      return true;
-    }
-    
-    // 2. Se não encontrou, tentar pela página principal (fallback)
-    const profileResponse = await axios.get(`https://twitter.com/${sourceUsername}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-      },
-      timeout: 10000
-    });
-    
-    // Verificar se mostra o botão "Seguindo" para o alvo
-    return profileResponse.data.includes(`data-testid="userFollowIndicator"`);
+    console.log('Nenhum método encontrou a relação de follow');
+    return false;
     
   } catch (error) {
-    console.error('Erro na verificação de follow:', error.message);
+    console.error('Erro geral na verificação de follow:', error.message);
     return false;
   }
 }
