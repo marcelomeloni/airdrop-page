@@ -6,27 +6,36 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TWITTER_USER_ID = '1916522994236825600'; // @sunaryum
+const TWITTER_USER_ID = '1916522994236825600';
+const TWITTER_TARGET_USER = 'sunaryum'; // Nome de usuário do alvo
+const CLAIM_ENERGY = 50;
 
 const twitterClient = new TwitterApi({
-  appKey:   process.env.TWITTER_CONSUMER_KEY,
-  appSecret:process.env.TWITTER_CONSUMER_SECRET,
+  appKey: process.env.TWITTER_CONSUMER_KEY,
+  appSecret: process.env.TWITTER_CONSUMER_SECRET,
 });
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-secret-key',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false },
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: false },
+  })
+);
 
-app.use(cors({
-  origin: 'https://airdrop-page.onrender.com', 
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: 'https://airdrop-page.onrender.com',
+    credentials: true,
+  })
+);
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -55,31 +64,68 @@ app.get('/twitter/auth', async (req, res) => {
     const callbackUrl = 'https://airdrop-page.onrender.com/twitter/callback';
     const { url, oauth_token, oauth_token_secret } =
       await twitterClient.generateAuthLink(callbackUrl);
+
     req.session.oauth_token = oauth_token;
     req.session.oauth_token_secret = oauth_token_secret;
     res.redirect(url);
   } catch (error) {
     console.error('Erro no OAuth:', error);
-    res.status(500).json({ error: 'Falha ao iniciar autenticação no Twitter' });
+    res
+      .status(500)
+      .json({ error: 'Falha ao iniciar autenticação no Twitter' });
   }
 });
 
-// ——————————————
-// novo: usa API v1.1 para checar se user A segue user B
-async function checkIfUserFollowsUsingV1(client, sourceUserId, targetUserId) {
+// ====================================================
+// SOLUÇÃO ROBUSTA USANDO PUPETEER (BROWSER AUTOMATIZADO)
+// ====================================================
+async function checkIfUserFollowsWithBrowser(sourceUsername) {
+  let browser = null;
   try {
-    const rel = await client.v1.friendships({ 
-      source_id: sourceUserId, 
-      target_id: targetUserId 
+    // Configuração para Render.com
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      ignoreHTTPSErrors: true,
     });
-    return rel.relationship.source.following === true;
-  } catch (err) {
-    console.error('Erro checando follow com v1.1:', err);
+
+    const page = await browser.newPage();
+    
+    // Navega até o perfil do usuário
+    await page.goto(`https://twitter.com/${sourceUsername}`, {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    // Aceita cookies se necessário
+    try {
+      await page.waitForSelector('div[role="button"] span:has-text("Accept all cookies")', { timeout: 5000 });
+      await page.click('div[role="button"] span:has-text("Accept all cookies")');
+      await page.waitForTimeout(1000);
+    } catch (e) {
+      console.log('No cookie acceptance needed');
+    }
+
+    // Verifica se segue o usuário alvo
+    const followButtonSelector = `div[data-testid="UserCell"]:has(a[href*="/${TWITTER_TARGET_USER}"]) button:has(div[data-testid*="follow"])`;
+    const isFollowing = await page.$(followButtonSelector) !== null;
+
+    return isFollowing;
+  } catch (error) {
+    console.error('Erro na verificação com browser:', error);
     return false;
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 }
-// ——————————————
 
+// ====================================================
+// CALLBACK ATUALIZADO
+// ====================================================
 app.get('/twitter/callback', async (req, res) => {
   const { oauth_token, oauth_verifier } = req.query;
   const session_oauth_token = req.session.oauth_token;
@@ -91,32 +137,28 @@ app.get('/twitter/callback', async (req, res) => {
 
   try {
     const tempClient = new TwitterApi({
-      appKey:   process.env.TWITTER_CONSUMER_KEY,
-      appSecret:process.env.TWITTER_CONSUMER_SECRET,
+      appKey: process.env.TWITTER_CONSUMER_KEY,
+      appSecret: process.env.TWITTER_CONSUMER_SECRET,
       accessToken: oauth_token,
       accessSecret: session_oauth_token_secret,
     });
+    
     const { client: userClient } = await tempClient.login(oauth_verifier);
 
-    // Busca dados do usuário autenticado
+    // Pega informações básicas do usuário
     const { data: userData } = await userClient.v2.me({
       'user.fields': ['id', 'username'],
     });
 
-    // ——————————————
-    // AQUI usamos v1.1 para checar follow
-    const follows = await checkIfUserFollowsUsingV1(
-      userClient,
-      userData.id,
-      TWITTER_USER_ID
-    );
-    // ——————————————
+    // VERIFICAÇÃO DE FOLLOW USANDO BROWSER AUTOMATIZADO
+    const follows = await checkIfUserFollowsWithBrowser(userData.username);
 
+    // Gera token de verificação
     const verificationToken = uuidv4();
     claimsDB.set(verificationToken, {
       userId: userData.id,
       screenName: userData.username,
-      follows,                      // true ou false
+      follows,
       walletAddress: req.session.walletAddress,
       verifiedAt: new Date(),
       expiresAt: new Date(Date.now() + 15 * 60 * 1000),
@@ -145,8 +187,9 @@ app.get('/twitter/callback', async (req, res) => {
     console.error('Error during callback:', error);
     res.status(500).send(`
       <!DOCTYPE html>
-      <html><head><title>Twitter Auth</title></head>
-      <body>
+      <html>
+      <head>
+        <title>Twitter Auth</title>
         <script>
           window.opener.postMessage({
             type: 'TWITTER_AUTH_COMPLETE',
@@ -155,7 +198,8 @@ app.get('/twitter/callback', async (req, res) => {
           }, '*');
           window.close();
         </script>
-      </body>
+      </head>
+      <body>Authentication failed. Please try again.</body>
       </html>
     `);
   }
