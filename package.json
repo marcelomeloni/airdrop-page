@@ -1,7 +1,10 @@
 {
-  "name": "api",
+  "name": "twitter-follow-verifier",
   "version": "1.0.0",
-  "main": "api.js",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "axios": "^1.8.0",
     "body-parser": "^1.20.2",
@@ -11,13 +14,5 @@
     "express-session": "^1.18.1",
     "twitter-api-v2": "^1.23.2",
     "uuid": "^11.1.0"
-  },
-  "devDependencies": {},
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  }
 }
