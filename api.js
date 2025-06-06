@@ -79,16 +79,18 @@ app.get('/twitter/auth', async (req, res) => {
 // ——————————————
 async function checkIfUserFollowsV2Lookup(client, sourceUserId, targetUserId) {
   try {
-    const { data } = await client.v2.follows(sourceUserId, targetUserId);
+    // GET /2/users/:source_user_id/following/:target_user_id
+    const { data } = await client.v2.userFollows(sourceUserId, targetUserId);
     return data?.following === true;
   } catch (err) {
     if (err.code === 404) {
-      return false; // User doesn't exist or relationship not found
+      return false; // Usuário não existe ou relação não encontrada
     }
     console.error('Erro checando follow (V2 lookup):', err);
     return false;
   }
 }
+
 
 // ——————————————
 // Callback após login no Twitter
