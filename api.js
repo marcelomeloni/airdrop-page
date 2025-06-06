@@ -76,33 +76,18 @@ app.get('/twitter/auth', async (req, res) => {
 // ——————————————————————————————————
 // Nova função corrigida: chama GET /2/users/:source/following/:target
 // ——————————————————————————————————
-async function checkIfUserFollowsV2ViaListing(client, sourceUserId, targetUserId) {
+// Função corrigida usando API v1.1 (funciona com plano Free)
+async function checkIfUserFollowsV1(client, sourceUserId, targetUserId) {
   try {
-    let paginationToken = undefined;
-
-    do {
-      // Lista até 1000 IDs de quem sourceUserId segue, por página:
-      const resp = await client.v2.following(sourceUserId, {
-        asPaginator: false,     // false é padrão; recebe data + meta
-        max_results: 1000,
-        pagination_token: paginationToken,
-        'user.fields': ['id'],  // só precisamos do id para comparar
-      });
-
-      // resp.data é array de objetos { id, name?, username? } 
-      if (resp.data.some(u => u.id === targetUserId)) {
-        // Achou targetUserId na página → segue
-        return true;
-      }
-
-      // Avança para próxima página (se existir)
-      paginationToken = resp.meta.next_token;
-    } while (paginationToken);
-
-    // Passou por todas as páginas e não achou → não segue
-    return false;
+    const relationship = await client.v1.friendship({
+      source_id: sourceUserId,
+      target_id: targetUserId
+    });
+    
+    // Verifica se o usuário segue a conta alvo
+    return relationship.connections.includes('following');
   } catch (err) {
-    console.error('Erro checando follow via listagem V2:', err);
+    console.error('Erro checando follow (V1.1):', err);
     return false;
   }
 }
@@ -133,12 +118,12 @@ app.get('/twitter/callback', async (req, res) => {
       'user.fields': ['id', 'username'],
     });
 
-    // Usa a listagem paginada para checar se segue @sunaryum:
-    const follows = await checkIfUserFollowsV2ViaListing(
-      userClient,
-      userData.id,
-      TWITTER_USER_ID
-    );
+  // Usa a função v1.1 para checar se segue @sunaryum:
+const follows = await checkIfUserFollowsV1(
+  userClient,
+  userData.id,
+  TWITTER_USER_ID
+);
 
     // Gera token de verificação e guarda no “DB” em memória
     const verificationToken = uuidv4();
