@@ -77,18 +77,40 @@ app.get('/twitter/auth', async (req, res) => {
 // Nova função corrigida: chama GET /2/users/:source/following/:target
 // ——————————————————————————————————
 // Função corrigida usando API v1.1 (funciona com plano Free)
-async function checkIfUserFollowsV1(client, sourceUserId, targetUserId) {
+async function checkIfUserFollowsAlternative(client, sourceUserId, targetUserId) {
   try {
-    const relationship = await client.v1.friendship({
-      source_id: sourceUserId,
-      target_id: targetUserId
+    // 1. Verifica se o usuário segue usando um método alternativo
+    const targetUser = await client.v2.user(targetUserId, {
+      'user.fields': ['public_metrics']
     });
     
-    // Verifica se o usuário segue a conta alvo
-    return relationship.connections.includes('following');
+    // 2. Checa se o usuário atual está nos seguidores do alvo
+    const followers = await client.v2.followers(targetUserId, {
+      max_results: 1000,
+      'user.fields': ['id']
+    });
+    
+    // 3. Procura o ID do usuário na lista de seguidores
+    return followers.data.some(user => user.id === sourceUserId);
   } catch (err) {
-    console.error('Erro checando follow (V1.1):', err);
-    return false;
+    console.error('Erro checando follow (método alternativo):', err);
+    
+    // 4. Fallback: verificação simplificada (menos precisa)
+    try {
+      const timeline = await client.v2.userTimeline(sourceUserId, {
+        max_results: 5,
+        'tweet.fields': ['referenced_tweets']
+      });
+      
+      // Verifica se o usuário mencionou ou respondeu ao alvo recentemente
+      return timeline.data.some(tweet => 
+        tweet.text.includes(`@${targetUser.data.username}`) || 
+        tweet.referenced_tweets?.some(ref => ref.id.includes(targetUserId))
+      );
+    } catch (fallbackError) {
+      console.error('Fallback também falhou:', fallbackError);
+      return false;
+    }
   }
 }
 
@@ -119,11 +141,11 @@ app.get('/twitter/callback', async (req, res) => {
     });
 
   // Usa a função v1.1 para checar se segue @sunaryum:
-const follows = await checkIfUserFollowsV1(
-  userClient,
-  userData.id,
-  TWITTER_USER_ID
-);
+const follows = await checkIfUserFollowsAlternative(
+      userClient,
+      userData.id,
+      TWITTER_USER_ID
+    );
 
     // Gera token de verificação e guarda no “DB” em memória
     const verificationToken = uuidv4();
